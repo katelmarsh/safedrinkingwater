@@ -1,0 +1,118 @@
+
+---
+title: "Water Quality"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data from NOAA about storm events from 1951-today 
+frustrating that they do not have an API, why is it a CSV download of like 35 files 
+Link: https://www.ncdc.noaa.gov/stormevents/listevents.jsp?eventType=%28Z%29+Winter+Storm&beginDate_mm=01&beginDate_dd=01&beginDate_yyyy=2000&endDate_mm=12&endDate_dd=31&endDate_yyyy=2021&county=ALL&hailfilter=0.00&tornfilter=0&windfilter=000&sort=DT&submitbutton=Search&statefips=48%2CTEXAS 
+
+```{r}
+hurricanes <- read.csv("~/Downloads/storm_data_tx_hurricane.csv")
+trop_storm <- read.csv("~/Downloads/storm_data_tropstrom_tropdepres.csv")
+coastal <- read.csv("~/Downloads/storm_data_coastal_flood.csv")
+
+colnames(hurricanes) == colnames(trop_storm)
+
+extreme_weather <- rbind(hurricanes, trop_storm)
+
+lapply(extreme_weather, class)
+summary(extreme_weather$INJURIES_INDIRECT)
+extreme_weather[which(extreme_weather$INJURIES_INDIRECT == 2400),] # max is hurricane Ike (which I was in Houston for)
+
+```
+
+
+## NOAA data part 2 
+now I'm trying to just use the bulk data then pare down from there because the website is so annoying and they only give 500 searched results at a time or bulk downloads 
+```{r}
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(purrr)
+
+dt = fread("~/Downloads/StormEvents_details-ftp_v1.0_d1950_c20170120.csv.gz")
+
+files <- dir("~/Downloads/storm_events", pattern = "*.csv.gz")
+
+
+setwd("~/Downloads/storm_events")
+getwd()
+
+files[1]
+
+data <- paste0("~/Downloads/storm_events/", files) %>%
+  map(fread)
+unique(lapply(data, length)) # length of 51 and 11 
+
+
+#made function to find length of a element in a list
+lengthIs <- function(n) function(x) length(x)==n
+
+# storm details
+data_51 <- do.call(rbind, Filter(lengthIs(51), data))
+
+data_fat <-  data[72:139] # manually removed the years / csvs with no data 
+# fatality data 
+data_fat <- do.call(rbind, Filter(lengthIs(11), data_fat))
+
+data_loc <-  data[188:214]                 
+# location data 
+data_loc <- rbindlist(data_loc, fill=TRUE)
+
+data_51 <- data_51[data_51$STATE == "TEXAS"] # weather details for just texas 
+most_dat <- merge(data_51, data_fat, by = "EVENT_ID", all.x = TRUE) # weather and fatalities for texas 
+tx_weather <- merge(most_dat, data_loc, by = "EVENT_ID", all.x = TRUE) # final dataset
+
+write.csv(tx_weather, "~/Downloads/tx_weather_noaa.csv")
+
+```
+
+## SDWIS Federal Reports on Texas PWS 
+Link: https://ofmpub.epa.gov/apex/sfdw/f?p=108:21::::RP,RIR::
+
+```{r}
+sdwis <- read.csv("~/Downloads/water_system_summary_SDWIS_FED_Reports.csv")
+
+lapply(sdwis, class)
+
+# Counties
+length(unique(sdwis$Counties.Served)) # might need some data cleaning, only 254 actual counties in texas ? 
+# after looking at a table() looks like "Dallas, Johnson" was misread and "Coke, Concho, Ector, Howard, Martin, Scurry, Ward" was also misread -- need to figure out what those are supposed to be also check if "Dallam" is a county or if that's a typo 
+
+# cleaning! removing commas from population count and making numeric
+y <- c(sdwis$Population.Served.Count)
+sdwis$Population.Served.Count = as.numeric(gsub(",", "", y))
+summary(sdwis$Population.Served.Count)
+
+# violations 
+hist(sdwis$X..of.Violations)
+summary(sdwis$X..of.Violations) 
+# one of them has 2411?! but it looks like most are under 10 
+sort(table(sdwis$Counties.Served[which(sdwis$X..of.Violations > 22)])) # seeing if the top quartile of violations are concentrated in certain counties -- it appears that Harris county (Houston), Brazoria, Montgomery, and Lubbock are the top offenders of counties with lots of water systems in the top quartile -- this should probably be indexed for amount of PWS in each county, but it is interesting that Harris county has such a larger amt than Dallas 
+
+```
+
+
+```{r}
+reg <- lm(X..of.Violations ~ Population.Served.Count + X..of.Site.Visits + X..of.Facilities, data=sdwis)
+summary(reg)
+# find significant relationship between violation count and site visit count
+plot(sdwis$X..of.Site.Visits, sdwis$X..of.Violations)
+
+
+reg <- lm(Population.Served.Count ~  X..of.Violations + X..of.Site.Visits + X..of.Facilities, data=sdwis)
+summary(reg)
+# find a significant relationship between population served and site visits or facilities 
+plot(sdwis$Population.Served.Count, sdwis$X..of.Facilities)
+
+
+```
+We find significant relationship between violation count and site visit count. We also find a a significant relationship between population served and site visits or facilities. These relationships follow common sense. PWSs with large amounts of violations probably have more visits. Similarly, PWSs that serve a larger population probably have more facilties and site visits. 
+
+
