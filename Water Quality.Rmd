@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 frustrating that they do not have an API, why is it a CSV download of like 35 files 
 Link: https://www.ncdc.noaa.gov/stormevents/listevents.jsp?eventType=%28Z%29+Winter+Storm&beginDate_mm=01&beginDate_dd=01&beginDate_yyyy=2000&endDate_mm=12&endDate_dd=31&endDate_yyyy=2021&county=ALL&hailfilter=0.00&tornfilter=0&windfilter=000&sort=DT&submitbutton=Search&statefips=48%2CTEXAS 
 
+this is preliminary work before I combined and pared down the bulk data. 
 ```{r}
 hurricanes <- read.csv("~/Downloads/storm_data_tx_hurricane.csv")
 trop_storm <- read.csv("~/Downloads/storm_data_tropstrom_tropdepres.csv")
@@ -39,12 +40,6 @@ library(purrr)
 dt = fread("~/Downloads/StormEvents_details-ftp_v1.0_d1950_c20170120.csv.gz")
 
 files <- dir("~/Downloads/storm_events", pattern = "*.csv.gz")
-
-
-setwd("~/Downloads/storm_events")
-getwd()
-
-files[1]
 
 data <- paste0("~/Downloads/storm_events/", files) %>%
   map(fread)
@@ -76,6 +71,8 @@ write.csv(tx_weather, "~/Downloads/tx_weather_noaa.csv")
 #Exploring the TX Weather Data 
 
 ```{r}
+tx_weather <- fread("~/Downloads/tx_weather_noaa.csv")
+
 classes <- lapply(tx_weather, class)
 numeric <- which(classes == "numeric")
 
@@ -86,6 +83,16 @@ plot(out)
 # checking to see the counties listed for the weather events -- there are 276 unique 
 length(unique(tx_weather$CZ_NAME[which(tx_weather$CZ_TYPE == 'C')]))
 
+hist(tx_weather$YEAR)
+
+counts <- table(tx_weather$MONTH_NAME)
+barplot(counts, main="Event Month",las=2, cex.names=.75)
+
+counts <- table(tx_weather$BEGIN_TIME)
+barplot(counts, main="Event Beginning Time",las=2, cex.names=.75)
+
+counts <- table(tx_weather$EVENT_TYPE)
+barplot(counts, main="Event Type",las=2, cex.names=.5)
 
 ```
 Interesting regression here. When using magnitude as the indicator variable, we find a significant relationship between it and beginning lat/long, ending lat/long, and year. We don't find any relationship between that and injuries/deaths or beginning day/time or ending day/time. However, it is probably a bad indicator variable because there at 57,000 NA variables in the magnitude column. Magnitude refers to only wind speed and hail size. 
@@ -98,10 +105,6 @@ sdwis <- read.csv("~/Downloads/water_system_summary_SDWIS_FED_Reports.csv")
 
 lapply(sdwis, class)
 
-# Counties
-length(unique(sdwis$Counties.Served)) # might need some data cleaning, only 254 actual counties in texas ? 
-# after looking at a table() looks like "Dallas, Johnson" was misread and "Coke, Concho, Ector, Howard, Martin, Scurry, Ward" was also misread -- need to figure out what those are supposed to be also check if "Dallam" is a county or if that's a typo 
-
 # cleaning! removing commas from population count and making numeric
 y <- c(sdwis$Population.Served.Count)
 sdwis$Population.Served.Count = as.numeric(gsub(",", "", y))
@@ -112,6 +115,9 @@ hist(sdwis$X..of.Violations)
 summary(sdwis$X..of.Violations) 
 # one of them has 2411?! but it looks like most are under 10 
 sort(table(sdwis$Counties.Served[which(sdwis$X..of.Violations > 22)])) # seeing if the top quartile of violations are concentrated in certain counties -- it appears that Harris county (Houston), Brazoria, Montgomery, and Lubbock are the top offenders of counties with lots of water systems in the top quartile -- this should probably be indexed for amount of PWS in each county, but it is interesting that Harris county has such a larger amt than Dallas 
+
+plot(sdwis$X..of.Violations, sdwis$Population.Served.Count, main = "Violations vs Population Served")
+
 
 ```
 
@@ -126,8 +132,11 @@ plot(sdwis$X..of.Site.Visits, sdwis$X..of.Violations)
 reg <- lm(Population.Served.Count ~  X..of.Violations + X..of.Site.Visits + X..of.Facilities, data=sdwis)
 summary(reg)
 # find a significant relationship between population served and site visits or facilities 
-plot(sdwis$Population.Served.Count, sdwis$X..of.Facilities)
-
+plot(sdwis$Population.Served.Count, sdwis$X..of.Facilities, main = "population served vs number of facilities")
+plot(sdwis$X..of.Site.Visits, sdwis$Population.Served.Count, main = "number of site visits vs population served")
+reg <- lm(X..of.Site.Visits ~  X..of.Violations + Population.Served.Count + X..of.Facilities, data=sdwis)
+summary(reg)
+plot(reg)
 ```
 We find significant relationship between violation count and site visit count. We also find a a significant relationship between population served and site visits or facilities. These relationships follow common sense. PWSs with large amounts of violations probably have more visits. Similarly, PWSs that serve a larger population probably have more facilties and site visits. 
 
@@ -141,10 +150,12 @@ county_list <- read.csv("~/Downloads/tx_counties.csv") # double checking CSV
 wrong_counties <- unique(weather_counties[toupper(weather_counties) %!in% toupper(county_list$County.Name)]) # list of counties that are not in the standard list, need cleaning
 
 ## SDWIS Counties 
+# Counties
 unique(sdwis$EPA.Region) # they're all in region 6 which is Texas 
 
 length(unique(sdwis$Counties.Served)) # only 256, 2 extra counties 
-wrong_counties_2 <-  unique(sdwis$Counties.Served[toupper(sdwis$Counties.Served) %!in% toupper(county_list$County.Name)])  # list of counties that are not in the standard list, need cleaning
+wrong_counties_2 <-  unique(sdwis$Counties.Served[toupper(sdwis$Counties.Served) %!in% toupper(county_list$County.Name)])  # list of counties that are not in the standard list, need cleaning 
+# after looking at this looks like "Dallas, Johnson" and "Coke, Concho, Ector, Howard, Martin, Scurry, Ward" are the extra counties 
 
 ```
 Trying to figure out how to combine given that multiple PWSs service one county and different parts of one county. 
