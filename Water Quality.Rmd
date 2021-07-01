@@ -73,6 +73,23 @@ write.csv(tx_weather, "~/Downloads/tx_weather_noaa.csv")
 
 ```
 
+#Exploring the TX Weather Data 
+
+```{r}
+classes <- lapply(tx_weather, class)
+numeric <- which(classes == "numeric")
+
+out <- lm(MAGNITUDE ~ BEGIN_DAY + BEGIN_TIME + END_DAY + END_TIME + YEAR + BEGIN_LAT + BEGIN_LON + END_LAT + END_LON + INJURIES_DIRECT + DEATHS_DIRECT + DEATHS_INDIRECT + INJURIES_INDIRECT, data=tx_weather)
+summary(out)
+plot(out)
+
+# checking to see the counties listed for the weather events -- there are 276 unique 
+length(unique(tx_weather$CZ_NAME[which(tx_weather$CZ_TYPE == 'C')]))
+
+
+```
+Interesting regression here. When using magnitude as the indicator variable, we find a significant relationship between it and beginning lat/long, ending lat/long, and year. We don't find any relationship between that and injuries/deaths or beginning day/time or ending day/time. However, it is probably a bad indicator variable because there at 57,000 NA variables in the magnitude column. Magnitude refers to only wind speed and hail size. 
+
 ## SDWIS Federal Reports on Texas PWS 
 Link: https://ofmpub.epa.gov/apex/sfdw/f?p=108:21::::RP,RIR::
 
@@ -111,8 +128,24 @@ summary(reg)
 # find a significant relationship between population served and site visits or facilities 
 plot(sdwis$Population.Served.Count, sdwis$X..of.Facilities)
 
-
 ```
 We find significant relationship between violation count and site visit count. We also find a a significant relationship between population served and site visits or facilities. These relationships follow common sense. PWSs with large amounts of violations probably have more visits. Similarly, PWSs that serve a larger population probably have more facilties and site visits. 
 
+```{r}
+weather_counties <- tx_weather$CZ_NAME[which(tx_weather$CZ_TYPE == 'C')] # names of counties in the tx_weather set
+length(unique(weather_counties)) # checking for how many county names there are. there are 276 whcih is much above the amt of 254. since I need cleaning for both this dataset and the other one, I'm going to get a set of county names to double check. 
+county_list <- read.csv("~/Downloads/tx_counties.csv") # double checking CSV
 
+'%!in%' <- function(x,y)!('%in%'(x,y)) # lil function to make it easier
+
+wrong_counties <- unique(weather_counties[toupper(weather_counties) %!in% toupper(county_list$County.Name)]) # list of counties that are not in the standard list, need cleaning
+
+## SDWIS Counties 
+unique(sdwis$EPA.Region) # they're all in region 6 which is Texas 
+
+length(unique(sdwis$Counties.Served)) # only 256, 2 extra counties 
+wrong_counties_2 <-  unique(sdwis$Counties.Served[toupper(sdwis$Counties.Served) %!in% toupper(county_list$County.Name)])  # list of counties that are not in the standard list, need cleaning
+
+```
+Trying to figure out how to combine given that multiple PWSs service one county and different parts of one county. 
+https://www.dshs.texas.gov/chs/info/info_txco.shtm -- decided to grab a CSV of official county names and FIPS codes from the Texas Government, this one is from the Department of State Health Services. 
