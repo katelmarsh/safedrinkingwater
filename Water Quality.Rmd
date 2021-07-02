@@ -160,3 +160,24 @@ wrong_counties_2 <-  unique(sdwis$Counties.Served[toupper(sdwis$Counties.Served)
 ```
 Trying to figure out how to combine given that multiple PWSs service one county and different parts of one county. 
 https://www.dshs.texas.gov/chs/info/info_txco.shtm -- decided to grab a CSV of official county names and FIPS codes from the Texas Government, this one is from the Department of State Health Services. 
+
+
+```{r}
+library(ggplot2)
+
+filt_weather <- tx_weather[tx_weather$EVENT_TYPE == c("Flash Flood","Hurricane","Coastal Flood", "Flood", "Storm Surge/Tide", "Heavy Rain", "Hurricane (Typhoon)", "Tropical Storm", "Tropical Depression", "THUNDERSTORM WINDS/ FLOOD")]
+
+
+qplot(BEGIN_LON, BEGIN_LAT, data=filt_weather, colour=EVENT_TYPE, 
+      main = "Map of Event Ending Locations in Texas")
+qplot(END_LON, END_LAT, data=filt_weather, colour=EVENT_TYPE, 
+      main = "Map of Event Ending Locations in Texas")
+
+table(filt_weather$EVENT_TYPE[which(is.na(filt_weather$BEGIN_LAT | filt_weather$BEGIN_LON))])
+# missing NA values for mostly flash floods and floods
+```
+
+
+
+
+
