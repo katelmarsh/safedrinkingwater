@@ -202,279 +202,30 @@ table(filt_weather$EVENT_TYPE[which(is.na(filt_weather$LATITUDE | filt_weather$L
 table(filt_weather$EVENT_TYPE[which(is.na(filt_weather$BEGIN_LAT | filt_weather$BEGIN_LON))])
 
 ```
-##Trying out a spatial join 
-using the urbnmapr r package to join and grab the counties/FIPS etc 
+##Spatial Join (I deleted all of my own code, this is Paulina's)
 
 ```{r}
-install.packages("devtools")
-library(tidyverse)
-library(urbnmapr)
-library(devtools)
-library(ggplot2)
-
-devtools::install_github("UrbanInstitute/urbnmapr")
-
-ggplot() + 
-  geom_polygon(data = urbnmapr::states, mapping = aes(x = long, y = lat, group = group),
-		           fill = "grey", color = "white") +
-  coord_map(projection = "albers", lat0 = 39, lat1 = 45)
-
-tx_weather$CZ_FIPS = as.character(tx_weather$CZ_FIPS)
-class(counties$county_fips)
-
-dim(tx_weather)
-
-
-counties_tx = counties[counties$state_name == "Texas",]
-tx_weather$BEGIN_LAT_R <- round(tx_weather$BEGIN_LAT,1) 
-tx_weather$BEGIN_LON_R <- round(tx_weather$BEGIN_LON,1) 
-
-#joining by long/lat just to see (this doesn't really work)
-#joined_weather <- left_join(tx_weather, counties_tx, by= c("BEGIN_LON_R" = "long", "BEGIN_LAT_R" = "lat"))
-
-#joined by FIPS code
-joined_weather <- left_join(tx_weather, counties_tx, by= c("CZ_FIPS" = "county_fips"))
-dim(joined_weather)
-joined_weather <- joined_weather[!is.na(joined_weather$BEGIN_LAT),] 
-
-joined_weather %>%
-  ggplot(aes(BEGIN_LON, BEGIN_LAT,group = group, if(!all(is.na(DAMAGE_PROPERTY))){fill=DAMAGE_PROPERTY})) +
-  geom_polygon(color = NA) +
-  coord_map(projection = "albers", lat0 = 39, lat1 = 45) +
-  labs(fill = "Property Damage")
-
-# texas_weather code 
-joined_weather %>% 
-  ggplot(mapping = aes(BEGIN_LON, BEGIN_LAT, group = group, fill = DAMAGE_PROPERTY_NUM)) +
-  geom_polygon(color = "#ffffff", size = .25) +
-  scale_fill_gradientn(labels = scales::percent,colors=NA,
-                       guide = guide_colorbar(title.position = "top")) +
-  coord_map(projection = "albers", lat0 = 39, lat1 = 45) +
-  theme(legend.title = element_text(),
-        legend.key.width = unit(.5, "in")) +
-  labs(fill = "Property Damage")
-
-
-```
-
-#trying again with SF and usaboundaries 
-tutorial: https://ryanpeek.org/2019-04-29-spatial-joins-in-R/
-
-```{r}
-library(sf)
-library(USAboundaries)
-devtools::install_github("ropensci/USAboundariesData")
-library(USAboundariesData)
-library(ggplot2)
-library(scales)
-
-us <- us_boundaries(type="state", resolution = "low") %>% 
-  filter(!state_abbr %in% c("PR", "AK", "HI"))
-
-tx <- USAboundaries::us_states(resolution = "high", states = "TX")
-
-# make a box around texas (a grid with an n=1) for inset
-tx_box <- st_make_grid(tx, n = 1)
-
-# get texas county boundary
-tx_co <- USAboundaries::us_counties(resolution = "high", states = "TX")
-
-# make sure we have all the pieces with a quick test plot
-plot(tx$geometry, col="gray50", border="maroon")
-plot(tx_co$geometry, add=T, border="pink", col=NA)
-plot(tx_box, add=T, border="red3", col=NA, lwd=2)
-
-#have to filter out misisng values to make it work 
-filt_tx_weather <- tx_weather[!is.na(tx_weather$BEGIN_LAT),] 
-
-# make spatial
-filt_tx_weather <- as.data.frame(filt_tx_weather) %>% 
-  st_as_sf(coords=c("BEGIN_LON","BEGIN_LAT"), crs=4326, remove=FALSE)  
-
-plot(filt_tx_weather$geometry, cex=0.5)
-plot(tx$geometry, col=alpha("gray", 0.5), border="#440154FF", lwd=1.5, add=TRUE)
-plot(filt_tx_weather$geometry, add=T, pch=21, bg="#21908CFF", cex=0.7, col="black")
-title("NOAA Texas Extreme Weather Events Beginning Locations")
-
-```
-
-
-
-# Some Links I've been using 
-https://www.maths.lancs.ac.uk/~rowlings/Teaching/UseR2012/cheatsheet.html
-
-
-```{r}
-library(sp)
+library(tidyr)
 library(rgdal)
-library(rgeos)
-library(raster)
-library(plyr)
-library(dplyr)
-library(maps)
-library(mapdata)
-library(maptools)
 
-cords <- cbind(filt_tx_weather$BEGIN_LON, filt_tx_weather$BEGIN_LAT)
-sp_cords <- SpatialPoints(cords) # makes them spatial 
-plot(sp_cords) # plot! 
-summary(sp_cords) # summarizes cords 
-coordinates(sp_cords) # prints cords
+County_Public_Forecast_Zones_Correlation_file <- read_csv("~/Downloads/County-Public Forecast Zones Correlation file.csv")
+TX_FIPS=County_Public_Forecast_Zones_Correlation_file %>% filter(STATE=="TX")
+TX_sh=shapefile("~/Downloads/geo_export_2fa04bf9-5c8d-4a39-8dda-98d943ae3202.shp")
 
-crs.geo <-CRS("+init=EPSG:32633")
-proj4string(sp_cords) <- crs.geo  # define projection system of our data
-is.projected(sp_cords)
-summary(sp_cords)
-st_crs(filt_tx_weather) <- 4326 # hard coding the CRS compatibility 
-filt_tx_weather <- st_transform(filt_tx_weather, 4326)  # hard coding the CRS compatibility 
 
-#merge sp cords back into tx_weather 
-sp_tx_df <- SpatialPointsDataFrame(sp_cords, as.data.frame(filt_tx_weather))
-summary(sp_tx_df)
+tx_weather_fil=tx_weather %>% drop_na(c(LONGITUDE, LATITUDE))
+coordinates(tx_weather_fil) <- c("LONGITUDE","LATITUDE")
+as(tx_weather_fil,"SpatialPoints")
+proj4string(tx_weather_fil) <- CRS("+proj=longlat +datum=WGS84")
+proj4string(TX_sh) <- CRS("+proj=longlat +datum=WGS84")
 
-#merged_weather <- join(tx_weather, counties_tx, by.x = "CZ_FIPS", by.y ="county_fips")
-cords <- cbind(counties_tx$long, counties_tx$lat)
-sp_cords <- SpatialPoints(cords) # makes them spatial
-crs.geo <-CRS("+init=EPSG:32633")
-proj4string(sp_cords) <- crs.geo  # define projection system of our data
-is.projected(sp_cords)
-summary(sp_cords)
-sp_tx_counties <- SpatialPointsDataFrame(sp_cords, as.data.frame(counties_tx))
-sf_counties <- st_as_sf(sp_tx_counties)
-sf_counties <- st_transform(sf_counties, 4326)  # hard coding the CRS compatibility 
-
-###this did not work, retrying 
-#weather_merge <- over(filt_tx_weather, sf_counties)
-#weather_merge <- sapply(st_intersects(sp_tx_df,sf_counties), function(z) if (length(z)==0) NA_integer_ else z[1])
-#weather_recombined <- cbind(sp_tx_df, weather_merge)
-#plot(weather_recombined)
-#plot(weather_recombined$DAMAGE_PROPERTY_NUM)
-```
-```{r}
-# Why does this not work? Overlay
-plot(tx_counties_sf) # ¥ay made a map of counties of texas 
-par(new = T)
-plot(sp_tx_df, col = "blue", add = T) # events
-par(new = F)
-
-par(mfrow = c(1, 2))
-plot(tx_counties_sf, axes = TRUE)
-plot(sp_tx_df, axes = TRUE)
-#clearly not on the same projection
-```
-
-OVER Merge 
-```{r}
-# making spatial polygons files 
-counties_sf <- get_urbn_map("counties", sf = TRUE)
-counties_shape_file <- as_Spatial(counties_sf, IDs = counties_sf$county_fips)
-#counties_shape_file <- as(counties_shape_file, "Spatial") # makes a SpatialPolygons object 
-# Spatial Polygons DataFrame
-tx_counties_sf <- subset(counties_shape_file, counties_shape_file$state_abbv == "TX")
-
-# setting CRS 
-proj4string(sp_tx_df) <- crs.geo
-proj4string(tx_counties_sf) <- crs.geo
-
-#tx_counties_sf <- CRS(proj4string(tx_counties_sf))
-#tx_events_proj <- spTransform(sp_tx_df, tx_counties_sf)
+mer=over(tx_weather_fil,TX_sh)
+data=cbind(mer,tx_weather_fil@data)
+data=data %>% dplyr::select(-date_date_, -time_date_,-date_dat_2,-time_dat_2,-date_dat_3,
+                     -time_dat_3,-shape_area,-source,-stratmap_i) %>% mutate(FIPS=paste0(STATE_FIPS,fips_code))
 
 ```
 
-
-trying to get the same CRS 
-```{r}
-# this is a spatial polygons dataframe 
-head(tx_counties_sf)
-
-# county map needs to be re-projected to be long/lat 
-tx_counties_sf <- sp_transform(tx_counties_sf, sp_tx_df)
-crs.geo <- CRS("+init=EPSG:4326")
-proj4string(tx_counties_sf) <- crs.geo
-is.projected(tx_counties_sf)
-summary(tx_counties_sf)
-```
-
-```{r}
-library(maptools)
-#counting num of events in each county
-###over.list <- over(tx_counties_sf, geometry(sp_tx_df), returnList = TRUE)
-over.list <- over(geometry(sp_tx_df), tx_counties_sf, returnList = TRUE)
-merged.weather <- spCbind(sp_tx_df, over.list)
-num.events <- sapply(over.list, length)
-counties <- spCbind(tx_counties_sf, num.events)
-
-events_per_dist <- over(counties, merged.weather, returnList = FALSE)
-events_per_dist[!is.na(events_per_dist)]
-
-```
+## Double Checking 
 
 
-# Maybe if I used sf package instead? 
-```{r}
-# sf type counties data 
-class(counties_sf)
-plot(counties_sf)
-
-ct_tx_sf <- counties_sf[counties_sf$state_abbv == 'TX',]
-
-plot(ct_tx_sf)
-
-sf_tx_df = st_as_sf(sp_tx_df) # this warning should be okay
-
-#set CRS the same 
-sf_tx_df <- st_set_crs(sf_tx_df, 2163)
-
-# this join doesn't seem to work
-joined <- st_join(sf_tx_df, ct_tx_sf)
-
-# this doesn't work either 
-intersects <- st_intersects(sf_tx_df, ct_tx_sf)
-
-# doesn't work, can't merge over two sf objects
-joined <- merge(sf_tx_df, ct_tx_sf, by.x= "CZ_FIPS", by.y="county_fips")
-
-# checking if there's any overlap
-any(st_touches(sf_tx_df, ct_tx_sf, sparse = FALSE))
-# doesn't seem to be any 'touches'
-
-# trying a non-overlaping join 
-sf_tx_df_P = st_transform(sf_tx_df, 4326)
-ct_tx_sf_P = st_transform(ct_tx_sf, 4326)
-
-sel = st_is_within_distance(sf_tx_df_P, ct_tx_sf_P, dist = 20)
-summary(lengths(sel) > 0) # this did not seem to work at all whatsoever 
-
-```
-
-# Stepping back 
-
-I am really trying to take the weather data and the lat/long associated with it to then find the county_fips code. This should be a spatial join on the long/lat and then grabbing the county_fips and adding that to the tx_weather file. 
-
-# trying again 
-```{r}
-# x=points, y=polygon
-pts <- sf_tx_df_P$geometry
-pol <- ct_tx_sf_P$geometry
-joined <- st_contains(pts, pol)
-mat = st_intersects(pts, pol, sparse = FALSE)
-```
-
-# Found the issue 
-Even with CRS set to the same and etc, I am realizing that the coordinate values have the wrong PERIOD! Instead of being after the first two digits, the coordinate is after the first 6 digits! Why!!! Now I just need to Gsub and I should be back on track. 
-
-
-```{r}
-ct_tx_sf_mod <- ct_tx_sf
-bad_cords <- as.data.frame(st_coordinates(ct_tx_sf))
-bad_cords[1,"X"] 
-
-bad_cords[1]
-# these g subs are not right but they're what I have 
-bad_cords$X <- as.numeric(gsub("([[:digit:]]{6,6})$", ".\\1", 
-                      bad_cords$X)) 
-bad_cords$Y <- as.numeric(gsub("([[:digit:]]{6,6})$", ".\\1", 
-                      bad_cords$Y)) 
-```
-
-This might not be the issue -- ask Paulina tomorrow. 
