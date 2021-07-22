@@ -71,9 +71,14 @@ write.csv(tx_weather, "~/Downloads/tx_weather_noaa.csv")
 #Exploring the TX Weather Data 
 
 ```{r}
-tx_weather <- fread("~/Downloads/tx_weather_noaa.csv")
+library(data.table)
+library(stringr)
+tx_weather <- fread("~/Downloads/tx_weather_noaa_ver_3.csv")
 
 #Paulina's code for filtering and cleaning property damage $ 
+events=c("Flash Flood","Drought", "Flood","Heavy Rain","Hurricane (Typhoon)",
+         "Tropical Storm","Tropical Depression","Hurricane","THUNDERSTORM WINDS/ FLOOD")
+
 tx_weather=tx_weather %>% filter(EVENT_TYPE%in%events) %>% mutate(Z_FIPS=case_when(
   CZ_FIPS<100&CZ_FIPS>9~paste0(0,CZ_FIPS),
   CZ_FIPS<10~paste0("00",CZ_FIPS),
@@ -91,7 +96,7 @@ tx_weather=tx_weather %>% filter(EVENT_TYPE%in%events) %>% mutate(Z_FIPS=case_wh
 classes <- lapply(tx_weather, class)
 numeric <- which(classes == "numeric")
 
-out <- lm(MAGNITUDE ~ BEGIN_DAY + BEGIN_TIME + END_DAY + END_TIME + YEAR + BEGIN_LAT + BEGIN_LON + END_LAT + END_LON + INJURIES_DIRECT + DEATHS_DIRECT + DEATHS_INDIRECT + INJURIES_INDIRECT, data=tx_weather)
+out <- lm(DAMAGE_PROPERTY_NUM ~ BEGIN_DAY + BEGIN_TIME + END_DAY + END_TIME + YEAR + BEGIN_LAT + BEGIN_LON + END_LAT + END_LON + INJURIES_DIRECT + DEATHS_DIRECT + DEATHS_INDIRECT + INJURIES_INDIRECT, data=tx_weather)
 summary(out)
 plot(out)
 
@@ -207,6 +212,9 @@ table(filt_weather$EVENT_TYPE[which(is.na(filt_weather$BEGIN_LAT | filt_weather$
 ```{r}
 library(tidyr)
 library(rgdal)
+library(readr)
+library(raster)
+library(dplyr)
 
 County_Public_Forecast_Zones_Correlation_file <- read_csv("~/Downloads/County-Public Forecast Zones Correlation file.csv")
 TX_FIPS=County_Public_Forecast_Zones_Correlation_file %>% filter(STATE=="TX")
@@ -227,7 +235,9 @@ data=data %>% dplyr::select(-date_date_, -time_date_,-date_dat_2,-time_dat_2,-da
 ```
 
 ## Double Checking 
+Cleaning CZ_FIPS in 'data' 
 ```{r}
+library(NLP)
 head(data)
 data$CZ_FIPS <- sprintf("%03d", as.numeric(data$CZ_FIPS))
 data$CZ_FIPS <- as.numeric(data$CZ_FIPS) + 48000
@@ -243,26 +253,253 @@ table(compared_fips$CZ_TYPE)["Z"]/table(compared_fips$CZ_TYPE)["C"]
 table(data$CZ_TYPE)["Z"]/table(data$CZ_TYPE)["C"] 
 # this amt makes sense compared to the amount of C and Z types in the original "data" dataset, although Z is .002 of the original data and .01 of the compared_fips. 
 
-# the sdwis I have doesn't have the fips, neither does the website 
-head(TX_FIPS)
-sdwis_fips <- merge(TX_FIPS, sdwis, by.x="COUNTY", by.y="Counties.Served", all.y=TRUE)
-length(unique(sdwis_fips$FIPS)) # 255??? 
-
-
-# Comparing against TX_FIPS file 
-length(unique(TX_FIPS$FIPS)) # 254 so? 
-
-sdwis_fips[which(sdwis_fips$FIPS %!in% TX_FIPS$FIPS),] # what to do with mulitple listed counties? 
-
 data[which(data$CZ_FIPS %!in% TX_FIPS$FIPS),] # what to do with mulitple listed counties? 
-TX_FIPS$FIPS["48003"] # this FIPS code does not exist, the fips code for Andrews county is 48003
+TX_FIPS$FIPS["48050"] # this FIPS code does not exist, the fips code for Andrews county is 48003
 TX_FIPS$FIPS["48074"] # this FIPS code does not exist, the fips code for Jeff Davis county is 48243, I believe they are referring to the Fort Davis Park or the Davis Mountains, which are both located in Jeff Davis County. 
 TX_FIPS$FIPS["48144"] # this FIPS code does not exist, the fips code for Bosque county is 48035
 TX_FIPS$FIPS["48156"] # this FIPS code does not exist, the fips code for Lampasas county is 48281
 TX_FIPS$FIPS["48134"] # this FIPS code does not exist, the fips code for Ellis county is 48139
 TX_FIPS$FIPS["48142"] # this FIPS code does not exist, the fips code for Mills county is 48333
 
+FIPS <- data$CZ_FIPS
+new_listed <- rep(NA, length(FIPS))
+for(i in 1:length(FIPS)) {
+  my_output <- switch(as.String(FIPS[i]), "48050" = "48003", "48074" = "48243", 
+                      "48144" = "48035", "48156"= "48281", "48134" = "48139", "48142"="48333")
+  if(is.null(my_output)){
+    new_listed[i] <- FIPS[i]
+  }
+  else {
+    new_listed[i] <- my_output
+  }
+}
+TX_FIPS$FIPS[which(TX_FIPS$FIPS %!in% new_listed)] # 48417 is not in the new_listed column 
+# Seems like these counties are not in the original CZ_FIPS file and do not have any extreme weather events 
+length(new_listed) == length(FIPS) # same length, same amount of elements 
+data$CZ_FIPS = as.numeric(new_listed)
+
 head(data$CZ_FIPS)
 head(TX_FIPS$FIPS)
+
+```
+
+
+```{r}
+# the sdwis I have doesn't have the fips, neither does the website 
+head(TX_FIPS)
+sdwis_fips <- merge(TX_FIPS, sdwis, by.x="COUNTY", by.y="Counties.Served", all.y=TRUE)
+length(unique(sdwis_fips$FIPS)) # 255??? 
+
+# Comparing against TX_FIPS file 
+length(unique(TX_FIPS$FIPS)) # 254, should be an accurate account of FIPS and county amounts 
+
+sdwis_fips[which(sdwis_fips$FIPS %!in% TX_FIPS$FIPS),] # what to do with mulitple listed counties? 
+# Row 1823 and 2159 do not have a corresponding FIPS code 
+# Finding primary county online.... 
+
+sdwis_fips[-c(1823, 2159),]
+
+sdwis_fips[which(TX_FIPS$FIPS %!in% sdwis_fips$FIPS),] # thw SDWIS file includes all of the FIPS codes in the TX_FIPS file 
+
+TX_FIPS[which(TX_FIPS$COUNTY %in% c("Coke", "Concho", "Ector", "Howard", "Martin", "Scurry", "Ward")),]
+# this is a municipal water district - should be serving only one county? 
+# Ask Paulina what to do about these multi-county PWSs 
+
+TX_FIPS[which(TX_FIPS$COUNTY %in% c("Dallas", "Johnson")),]
+# this is one ranch, likely in Dallas OR johnson county, not both
+# the street address is johnson county and since this is the PWS for one ranch, I'm going to say it only resides in one county. 
+
+plot(sdwis_fips$LON, sdwis_fips$LAT) # this makes sense, about 1 pws per most counties/areas 
+
+sdwis_fips$FIPS <- as.numeric(sdwis_fips$FIPS)
+# removing the FIPS name "48NA" from the FIPS column 
+data$FIPS[which(data$FIPS =="48NA")] <- NA
+
+
+write.csv(sdwis_fips, "sdwis_2021.csv")
+write.csv(data, "joined_tx_weather.csv")
+
+
+```
+
+```{r}
+county_count_sdwis <- t(data.frame(rbind(table(sdwis_fips$FIPS))))
+county_count_data <- t(data.frame(rbind(table(data[c("FIPS","YEAR", "MONTH_NAME","EVENT_TYPE","DAMAGE_PROPERTY_NUM")]))))
+rownames(county_count_data) == rownames(county_count_data)
+
+
+df <- as.data.frame(cbind(county_count_sdwis, county_count_data, rownames(county_count_data)))
+colnames(df) <- c("sdwis", "weather", "FIPS")
+df$FIPS <- sub("X", "", df$FIPS)
+
+df$sdwis <- as.numeric(df$sdwis)
+df$weather <- as.numeric(df$weather)
+
+# Seeing if there is any overlap in top counts
+head(sort(county_count_sdwis, decreasing = TRUE), 20) %in% head(sort(county_count_data, decreasing = TRUE), 20) 
+
+plot(df$weather, df$sdwis)
+
+# looking at correlations
+out <- lm(weather ~ sdwis, data = df)
+summary(out)
+plot(out)
+
+out <- lm(sdwis ~ weather, data = df)
+summary(out)
+plot(out)
+
+cor(df$sdwis,df$weather) # overall kind of low - maybe split by region? 
+
+head(df)
+df_w_merge <- merge(df, TX_FIPS, by.x="FIPS", by.y="FIPS", all.x=TRUE)
+
+table(df_w_merge$FE_AREA)
+summary(df_w_merge$FE_AREA)
+ee <- df[which(df_w_merge$FE_AREA == "ee"),]
+cor(as.numeric(ee$sdwis),as.numeric(ee$weather))
+
+
+```
+
+
+```{r}
+tceq_df <- read_csv("~/Downloads/PIR54466_Health_Based_Violations.csv")
+tceq_df$BEGIN_DT <- as.Date(tceq_df$BEGIN_DT, format ="%m/%d/%Y")
+tceq_df$END_DT <- as.Date(tceq_df$END_DT, format ="%m/%d/%Y")
+hist(tceq_df$VIOLATION_YEAR)
+unique(tceq_df$VIOLATION_YEAR)
+
+sdwis_tceq <- merge(tceq_df, sdwis_fips, by.x="WSID", by.y="PWS.ID", all.x=TRUE)
+
+write.csv(sdwis_tceq, "merged_tceq_sdwis_2015_2020.csv")
+
+hist(sdwis_tceq$VIOLATION_YEAR)
+plot(sdwis_tceq$X..of.Violations,sdwis_tceq$BEGIN_DT) # are the same violations being repeated?? 
+
+sort(table(sdwis_tceq$"ANALYTE/RULE")) # the largest group of violations is trihalomethanes -- something I did not see mentioned in any of the literature about Texas water quality but was the major thing in the Flint water crisis 
+length(unique(sdwis_tceq$FIPS)) # only about 85% of counties in texas have violations no biggie 
+
+out <- lm(X..of.Violations ~ X..of.Facilities + X..of.Site.Visits + Population.Served.Count + LAT + LON + FIPS + ZONE + BEGIN_DT + END_DT + VIOL_NUM + POPULATION + VIOLATION_YEAR, data = sdwis_tceq) 
+summary(out)
+
+plot(sdwis_tceq$X..of.Violations, sdwis_tceq$VIOL_NUM) # looks like VIOL_NUM is actually a factor with the number of the violation and not a continuous variable, might be interesting to do some sort of categorical thing
+plot(sdwis_tceq$ZONE, sdwis_tceq$X..of.Violations) # not sure what the zone variable is but it looks like one value around 40 has a very high amount of violations and maybe we are missing data for 360-410ish 
+plot(sdwis_tceq$FIPS, sdwis_tceq$X..of.Violations) # again it looks like one county has a large amount of violations, otherwise it is a somewhat uniform distribution 
+plot(sdwis_tceq$LON, sdwis_tceq$X..of.Violations) # this does not seem to really show anything other than what the other graphs have shown - coastlines seem susceptible to water damage 
+plot(sdwis_tceq$X..of.Site.Visits, sdwis_tceq$X..of.Violations) # kind of an interesting plot, showing more of a spread out depiction of violations, not the exact same as the other graphs with mostly uniform and one spike. This one has a few scattered points where high violations =/= high site visits. 
+plot(sdwis_tceq$X..of.Facilities, sdwis_tceq$X..of.Violations) # doesn't seem to be all that correlated 
+
+```
+
+```{r}
+library(waffle)
+library(ggplot2)
+library(see)
+
+violations <- sort(table(sdwis_tceq$"ANALYTE/RULE"), decreasing = TRUE)[1:12]
+color <- metro_colors()[1:12]
+
+waffle(violations/100, rows=9,
+       colors = color,
+       title="PWS Violation Types (N >100)", 
+       xlab="1 square = 100 violations")
+
+```
+
+# Important Weather Events Pre 2015? 
+```{r}
+summary(data$DAMAGE_PROPERTY_NUM) # 3rd quartile is $4000 plus 
+
+# Defined by Top Quartile of Property Damage Amount 
+top_quart <- data[which(data$DAMAGE_PROPERTY_NUM >= 4000),]
+table(top_quart$YEAR) # 2316 events from 2001-2014 of note, 1428 in/after 2015
+
+# Defined by Over $1 Mil of Property Damage Amount 
+top_mil <- data[which(data$DAMAGE_PROPERTY_NUM >= 1000000),]
+table(top_mil$YEAR) # 242 events from 2001-2014, 139 in/after 2015 
+
+# Defined by Over $100,000 of Property Damage Amount 
+top_thou <- data[which(data$DAMAGE_PROPERTY_NUM >= 100000),]
+table(top_thou$YEAR) # 674 events from 2001-2014, 451 in/after 2015 
+
+
+plot(top_mil$BEGIN_LON, top_mil$BEGIN_LAT)
+```
+# Regression with a Binary dependent variable when the storm hits Pre and post violations 
+
+idea: create a binary variable for each violation - does this violation happen before or after x major event? 
+Regress against this variable 
+Major events being $1,000,000+ in property damage 
+most counties have more than one PWS and ~1 major event in the last 5 years 
+
+```{r}
+library(dplyr)
+data_recent <- top_mil[top_mil$YEAR >= 2015,] # filtering to 2015+ 
+data_recent <- data_recent %>% select(!starts_with("TOR") & !starts_with("CZ") & !contains("MAGNITUDE") & !contains("STATE")) # deleting some unnecessary columns
+                                      
+table(data_recent$FIPS)
+head(data_recent)
+
+table(sdwis_tceq$FIPS)
+
+#ols <- glm(,family = binomial(link="logit"), data=data)
+
+```
+
+# Not sure how to do top analysis 
+- starting with top damage in each FIPS code 
+```{r}
+
+max_fips <- aggregate(DAMAGE_PROPERTY_NUM~FIPS, data=data, max, na.rm = TRUE)
+which()
+which(data$DAMAGE_PROPERTY_NUM == max_fips$DAMAGE_PROPERTY_NUM, arr.ind = TRUE)
+
+library(data.table)
+data$FIPS <- as.factor(data$FIPS)
+as.data.table(data)[, DAMAGE_PROPERTY_NUM, 
+                          by = FIPS]
+
+max_fips <- data[data$DAMAGE_PROPERTY_NUM == ave(data$DAMAGE_PROPERTY_NUM, data$FIPS, FUN=max, na.rm=TRUE),]
+
+
+```
+
+
+```{r}
+library(dplyr)
+library(purrr)
+library(data.table)
+
+hist(data$YEAR)
+  
+files <- dir("~/Desktop/storm_events", pattern = "*.csv.gz")
+
+data_gz <- paste0("~/Desktop/storm_events/", files) %>%
+  map(fread)
+unique(lapply(data_gz, length)) # length of 51 and 11 
+
+#made function to find length of a element in a list
+lengthIs <- function(n) function(x) length(x)==n
+
+# storm details
+data_51 <- do.call(rbind, Filter(lengthIs(51), data_gz))
+
+data_fat <- Filter(lengthIs(11), data_gz)
+data_fatalities <- do.call(rbind, data_fat[1:4])
+data_fatalities_2 <- do.call(rbind, data_fat[5:8])
+
+data_51 <- data_51[data_51$STATE == "TEXAS"] # weather details for just texas 
+
+most_dat <- merge(data_51, data_fatalities, by = "EVENT_ID", all.x = TRUE) # weather and fatalities for texas 
+tx_weather_2 <- merge(most_dat, data_fatalities_2, by = "EVENT_ID", all.x = TRUE) # final dataset
+
+tx_weather <- read.csv("~/Downloads/tx_weather_noaa.csv")
+
+tx_weather$X = NULL
+
+tx_weather_full <- rbind(tx_weather,tx_weather_2)
+
+write.csv(tx_weather_full, "~/Downloads/tx_weather_noaa_ver_3.csv")
 
 ```
