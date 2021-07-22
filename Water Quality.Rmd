@@ -227,5 +227,42 @@ data=data %>% dplyr::select(-date_date_, -time_date_,-date_dat_2,-time_dat_2,-da
 ```
 
 ## Double Checking 
+```{r}
+head(data)
+data$CZ_FIPS <- sprintf("%03d", as.numeric(data$CZ_FIPS))
+data$CZ_FIPS <- as.numeric(data$CZ_FIPS) + 48000
+length(unique(data$CZ_FIPS)) #258??? 
+
+compared_fips <- data[which(data$fips_code != data$CZ_FIPS),]
+# from the "episode narrative" it is pretty clear that the Long/Lat do not necessarily line up with the counties for some of the reported. Most of the time it is the same storm listed multiple times with different long/lats 
+dim(compared_fips) # 1407 of the things were changed from original CZ_fips 
+table(compared_fips$CZ_TYPE) 
+# most of the changed fips codes were C rather than Z, looks like most of the "z" codes did not line up because they were actually the correct C codes 
+table(compared_fips$CZ_TYPE)["Z"]/table(compared_fips$CZ_TYPE)["C"] 
+# most of the changed fips codes were C rather than Z, looks like most of the "z" codes did not line up because they were actually the correct C codes 
+table(data$CZ_TYPE)["Z"]/table(data$CZ_TYPE)["C"] 
+# this amt makes sense compared to the amount of C and Z types in the original "data" dataset, although Z is .002 of the original data and .01 of the compared_fips. 
+
+# the sdwis I have doesn't have the fips, neither does the website 
+head(TX_FIPS)
+sdwis_fips <- merge(TX_FIPS, sdwis, by.x="COUNTY", by.y="Counties.Served", all.y=TRUE)
+length(unique(sdwis_fips$FIPS)) # 255??? 
 
 
+# Comparing against TX_FIPS file 
+length(unique(TX_FIPS$FIPS)) # 254 so? 
+
+sdwis_fips[which(sdwis_fips$FIPS %!in% TX_FIPS$FIPS),] # what to do with mulitple listed counties? 
+
+data[which(data$CZ_FIPS %!in% TX_FIPS$FIPS),] # what to do with mulitple listed counties? 
+TX_FIPS$FIPS["48003"] # this FIPS code does not exist, the fips code for Andrews county is 48003
+TX_FIPS$FIPS["48074"] # this FIPS code does not exist, the fips code for Jeff Davis county is 48243, I believe they are referring to the Fort Davis Park or the Davis Mountains, which are both located in Jeff Davis County. 
+TX_FIPS$FIPS["48144"] # this FIPS code does not exist, the fips code for Bosque county is 48035
+TX_FIPS$FIPS["48156"] # this FIPS code does not exist, the fips code for Lampasas county is 48281
+TX_FIPS$FIPS["48134"] # this FIPS code does not exist, the fips code for Ellis county is 48139
+TX_FIPS$FIPS["48142"] # this FIPS code does not exist, the fips code for Mills county is 48333
+
+head(data$CZ_FIPS)
+head(TX_FIPS$FIPS)
+
+```
