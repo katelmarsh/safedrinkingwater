@@ -119,6 +119,45 @@ barplot(counts, main="Event Type",las=2, cex.names=.5)
 ```
 Interesting regression here. When using magnitude as the indicator variable, we find a significant relationship between it and beginning lat/long, ending lat/long, and year. We don't find any relationship between that and injuries/deaths or beginning day/time or ending day/time. However, it is probably a bad indicator variable because there at 57,000 NA variables in the magnitude column. Magnitude refers to only wind speed and hail size. 
 
+
+```{r}
+library(dplyr)
+library(purrr)
+library(data.table)
+
+hist(data$YEAR)
+  
+files <- dir("~/Desktop/storm_events", pattern = "*.csv.gz")
+
+data_gz <- paste0("~/Desktop/storm_events/", files) %>%
+  map(fread)
+unique(lapply(data_gz, length)) # length of 51 and 11 
+
+#made function to find length of a element in a list
+lengthIs <- function(n) function(x) length(x)==n
+
+# storm details
+data_51 <- do.call(rbind, Filter(lengthIs(51), data_gz))
+
+data_fat <- Filter(lengthIs(11), data_gz)
+data_fatalities <- do.call(rbind, data_fat[1:4])
+data_fatalities_2 <- do.call(rbind, data_fat[5:8])
+
+data_51 <- data_51[data_51$STATE == "TEXAS"] # weather details for just texas 
+
+most_dat <- merge(data_51, data_fatalities, by = "EVENT_ID", all.x = TRUE) # weather and fatalities for texas 
+tx_weather_2 <- merge(most_dat, data_fatalities_2, by = "EVENT_ID", all.x = TRUE) # final dataset
+
+tx_weather <- read.csv("~/Downloads/tx_weather_noaa.csv")
+
+tx_weather$X = NULL
+
+tx_weather_full <- rbind(tx_weather,tx_weather_2)
+
+write.csv(tx_weather_full, "~/Downloads/tx_weather_noaa_ver_3.csv")
+
+```
+
 ## SDWIS Federal Reports on Texas PWS 
 Link: https://ofmpub.epa.gov/apex/sfdw/f?p=108:21::::RP,RIR::
 
@@ -317,7 +356,7 @@ data$FIPS[which(data$FIPS =="48NA")] <- NA
 
 
 write.csv(sdwis_fips, "sdwis_2021.csv")
-write.csv(data, "joined_tx_weather.csv")
+write.csv(data, "~/Downloads/joined_tx_weather.csv")
 
 
 ```
@@ -372,15 +411,15 @@ unique(tceq_df$VIOLATION_YEAR)
 
 sdwis_tceq <- merge(tceq_df, sdwis_fips, by.x="WSID", by.y="PWS.ID", all.x=TRUE)
 
-write.csv(sdwis_tceq, "merged_tceq_sdwis_2015_2020.csv")
+write.csv(sdwis_tceq, "~/Downloads/merged_tceq_sdwis_2015_2020.csv")
 
 hist(sdwis_tceq$VIOLATION_YEAR)
-plot(sdwis_tceq$X..of.Violations,sdwis_tceq$BEGIN_DT) # are the same violations being repeated?? 
+#plot(sdwis_tceq$X..of.Violations,sdwis_tceq$BEGIN_DT) # are the same violations being repeated?? 
 
 sort(table(sdwis_tceq$"ANALYTE/RULE")) # the largest group of violations is trihalomethanes -- something I did not see mentioned in any of the literature about Texas water quality but was the major thing in the Flint water crisis 
 length(unique(sdwis_tceq$FIPS)) # only about 85% of counties in texas have violations no biggie 
 
-out <- lm(X..of.Violations ~ X..of.Facilities + X..of.Site.Visits + Population.Served.Count + LAT + LON + FIPS + ZONE + BEGIN_DT + END_DT + VIOL_NUM + POPULATION + VIOLATION_YEAR, data = sdwis_tceq) 
+out <- lm(X..of.Violations ~ X..of.Facilities + X..of.Site.Visits + Population.Served.Count + LAT + LON + FIPS + ZONE + BEGIN_DT_VIOL + END_DT + VIOL_NUM + POPULATION + VIOLATION_YEAR, data = sdwis_tceq) 
 summary(out)
 
 plot(sdwis_tceq$X..of.Violations, sdwis_tceq$VIOL_NUM) # looks like VIOL_NUM is actually a factor with the number of the violation and not a continuous variable, might be interesting to do some sort of categorical thing
@@ -403,7 +442,16 @@ color <- metro_colors()[1:12]
 waffle(violations/100, rows=9,
        colors = color,
        title="PWS Violation Types (N >100)", 
-       xlab="1 square = 100 violations")
+       xlab="1 square = 100 violations (Total: 12687)")
+
+
+events <- sort(table(data$"EVENT_TYPE"), decreasing = TRUE)
+color <- metro_colors()[c(2,5,8)]
+
+waffle(events/50, rows=9,
+       colors = color,
+       title="Weather Event Types", 
+       xlab="1 square = 50 events (Total: 6538)")
 
 ```
 
@@ -449,57 +497,252 @@ table(sdwis_tceq$FIPS)
 
 # Not sure how to do top analysis 
 - starting with top damage in each FIPS code 
+Model 1 - Reviewed 7/23 with Paulina 
+** FIXED July 25 to 2015+ data 
+
 ```{r}
+library(lubridate)
+library(tidyverse)
+library(broom)
+data = data[data$YEAR >=2015,]
+max_per_fips <- data %>% group_by(FIPS) %>% slice(which.max(DAMAGE_PROPERTY_NUM))
+max_per_fips$BEGIN_DATE_TIME <- as.Date(dmy_hms(max_per_fips$BEGIN_DATE_TIME))
 
-max_fips <- aggregate(DAMAGE_PROPERTY_NUM~FIPS, data=data, max, na.rm = TRUE)
-which()
-which(data$DAMAGE_PROPERTY_NUM == max_fips$DAMAGE_PROPERTY_NUM, arr.ind = TRUE)
+class(sdwis_tceq$BEGIN_DT)
+# dummy variable for whether a violation was before or after an event in a FIPS code 
+#sdwis_tceq$BEFORE_EVENT <- which(sdwis_tceq$FIPS == max_per_fips$FIPS)
 
-library(data.table)
-data$FIPS <- as.factor(data$FIPS)
-as.data.table(data)[, DAMAGE_PROPERTY_NUM, 
-                          by = FIPS]
+sdwis_tceq <- rename(sdwis_tceq, BEGIN_DT_VIOL =BEGIN_DT_VIOL) 
+max_per_fips <- rename(max_per_fips, BEGIN_DT_EVENT = BEGIN_DATE_TIME) 
+merged_df <- merge(sdwis_tceq,max_per_fips, by="FIPS", all.x=TRUE) 
 
-max_fips <- data[data$DAMAGE_PROPERTY_NUM == ave(data$DAMAGE_PROPERTY_NUM, data$FIPS, FUN=max, na.rm=TRUE),]
+#ifelse(sdwis_tceq$BEGIN_DT >= max_per_fips$BEGIN_DATE_TIME, 1, 0)
+
+#if violation began after event, put 1 in dummy column 
+merged_df$dummy <- ifelse(merged_df$BEGIN_DT_VIOL >= merged_df$BEGIN_DT_EVENT, 1, 0)
+
+ols <- glm(dummy~DAMAGE_PROPERTY_NUM + VIOLATION_YEAR + POPULATION + X..of.Facilities + X..of.Site.Visits,family = binomial, data=merged_df)
+summary(ols)
+plot(ols)
+probabilities <- predict(ols, type = "response")
+hist(probabilities)
+predicted.classes <- ifelse(probabilities > 0.5, "after event", "before event")
+table(predicted.classes)
+head(predicted.classes)
+
+#plot(merged_df$DAMAGE_PROPERTY_NUM, merged_df$dummy)
+#cov(merged_df$Population.Served.Count,merged_df$POPULATION)
+
+# trying with randomly generated data out of curiosity 
+#merged_df$dummy_fake <- sample(c(0,1), replace = TRUE,size=length(merged_df$dummy))
+
+# fake data, nothing is significant :) 
+#ols_f <- glm(dummy_fake~DAMAGE_PROPERTY_NUM + X..of.Facilities + X..of.Violations  +  X..of.Site.Visits + Population.Served.Count + POPULATION,family = binomial(link="logit"), data=merged_df)
+#summary(ols_f)
 
 
 ```
 
+# Suggested Model 1 
+glm logistic regression model 
+finding probability that you have a violation 
+aggregate violations per month on a county level 
+0 if no 1 if yes violation given that there is an event in that month 
+NOTE: make sure there are months with no violations 
 
 ```{r}
-library(dplyr)
-library(purrr)
-library(data.table)
+data_1 <- read.csv("~/Downloads/joined_tx_weather.csv")
+sdwis_tceq_1 <- read.csv("~/Downloads/merged_tceq_sdwis_2015_2020.csv")
+data_1 = data_1[data_1$YEAR >=2015,]
+top_mil <- data_1[which(data_1$DAMAGE_PROPERTY_NUM >= 100000),]
+top_mil$BEGIN_DATE_TIME <- as.Date(dmy_hms(top_mil$BEGIN_DATE_TIME))
 
-hist(data$YEAR)
-  
-files <- dir("~/Desktop/storm_events", pattern = "*.csv.gz")
+#sdwis_tceq <- rename(sdwis_tceq, BEGIN_DT_VIOL = BEGIN_DT) 
+top_mil <- rename(top_mil, BEGIN_DT_EVENT = BEGIN_DATE_TIME) 
 
-data_gz <- paste0("~/Desktop/storm_events/", files) %>%
-  map(fread)
-unique(lapply(data_gz, length)) # length of 51 and 11 
+#decided not to merge 
+#colnames(county_count_events) <- paste("EV", colnames(county_count_events), sep = "_")
+#colnames(county_count_sdwis) <- paste("SDW", colnames(county_count_sdwis), sep = "_")
+#merged_df_2 <- merge(sdwis_tceq,top_mil, by="FIPS", all.x=TRUE) 
 
-#made function to find length of a element in a list
-lengthIs <- function(n) function(x) length(x)==n
+#making month and year format columns 
+top_mil$Month_Yr_EVENT <- format(as.Date(top_mil$BEGIN_DT_EVENT), "%Y-%m")
+sdwis_tceq$Month_Yr_VIOL <- format(as.Date(sdwis_tceq$BEGIN_DT_VIOL), "%Y-%m")
 
-# storm details
-data_51 <- do.call(rbind, Filter(lengthIs(51), data_gz))
+# making matrices with counts by county and month/year
+county_count_events <- t(data.frame(rbind(table(top_mil[c("FIPS","Month_Yr_EVENT")]))))
+county_count_sdwis <- t(data.frame(rbind(table(sdwis_tceq_1[c("FIPS","Month_Yr_VIOL")]))))
+true_events <- county_count_events >0 # matrix with TRUE when event happens 
+# table of weather events dates 
+table <- t(t(apply(true_events, 1, function(u) paste( names(which(u)), collapse=","))))
+count_events_df <- true_events %>% as.table %>% as.data.frame(., stringsAsFactors=FALSE)
+#count_events_df <- count_events_df[count_events_df$Freq == TRUE,]
 
-data_fat <- Filter(lengthIs(11), data_gz)
-data_fatalities <- do.call(rbind, data_fat[1:4])
-data_fatalities_2 <- do.call(rbind, data_fat[5:8])
+#formatting same as other dataset
+count_events_df$Var1 <- sub("X", "", count_events_df$Var1)
+count_events_df$Var1 <- sub(".", "-", count_events_df$Var1, fixed = TRUE)
 
-data_51 <- data_51[data_51$STATE == "TEXAS"] # weather details for just texas 
+viol_counts <- as.data.frame(table(sdwis_tceq_1[c("FIPS","Month_Yr_VIOL")]))
 
-most_dat <- merge(data_51, data_fatalities, by = "EVENT_ID", all.x = TRUE) # weather and fatalities for texas 
-tx_weather_2 <- merge(most_dat, data_fatalities_2, by = "EVENT_ID", all.x = TRUE) # final dataset
+count_df <- merge(count_events_df, viol_counts, by.x=c("Var1", "Var2"), by.y=c("Month_Yr_VIOL","FIPS"),all=TRUE)
+count_df$Freq.x[is.na(count_df$Freq.x)] <- 0 # making missing values for No event equal to 0 
+#count_df <- count_df[na.omit(count_df$Freq.x),]# making missing values for No event equal to 0 
+#final <- na.omit(count_df)
 
-tx_weather <- read.csv("~/Downloads/tx_weather_noaa.csv")
+ols <- glm(Freq.x ~ Freq.y, data=count_df, family = binomial)
+summary(ols)
 
-tx_weather$X = NULL
-
-tx_weather_full <- rbind(tx_weather,tx_weather_2)
-
-write.csv(tx_weather_full, "~/Downloads/tx_weather_noaa_ver_3.csv")
+x_freq <- seq(0,50,1) # prediction list 
+probabilities <- predict(ols, list(Freq.y = x_freq), type = "response")
+summary(probabilities)
+plot(count_df$Freq.y, count_df$Freq.x, pch = 16, xlab = "EVENTS (Prop Damage > 100K)", ylab = "Freq.y")
+lines(x_freq, probabilities)
 
 ```
+```{r}
+library(readr)
+data_1 <- read_csv("joined_tx_weather.csv")
+sdwis_tceq_1 <- read_csv("merged_tceq_sdwis_2015_2020.csv")
+
+top_mil = data_1 %>% filter(YEAR >=2015& DAMAGE_PROPERTY_NUM >= 100000) %>% 
+  mutate(BEGIN_DATE_TIME= as.Date(dmy_hms(BEGIN_DATE_TIME)), Month_Yr_EVENT=format(as.Date(top_mil$BEGIN_DT_EVENT), "%Y-%m"),) %>% 
+  rename(BEGIN_DT_EVENT = BEGIN_DATE_TIME)
+
+sdwis_tceq_1=sdwis_tceq_1 %>% mutate(Month_Yr_VIOL=format(as.Date(BEGIN_DT), "%Y-%m"))
+
+county_count_events=top_mil %>% group_by(FIPS,Month_Yr_EVENT) %>% count() %>% filter(n>0)
+county_count_sdwis=sdwis_tceq_1 %>% group_by(FIPS,Month_Yr_VIOL) %>% count()
+
+count_df <- merge(county_count_events, county_count_sdwis, by.x=c("FIPS","Month_Yr_EVENT"),
+                  by.y=c("FIPS","Month_Yr_VIOL"),all=TRUE) %>% rename(Events=n.x, Violations=n.y) %>% replace(is.na(.), 0) %>% 
+  mutate(Vio.dum=ifelse(Violations>0,1,0)) #Maybe change for >mean(Violations or another threshold)
+
+ols <- glm(Vio.dum ~ Events, data=count_df, family = binomial)
+summary(ols)
+
+plot(count_df$Events, count_df$Violations, ylab="Violations", xlab="Events", main="All types of violations")
+
+```
+## Seems to have almost the exact same results for when filtered to have only TTHM violations 
+```{r}
+county_count_tthm= sdwis_tceq_1 %>% rename(ANALYTE.RULE="ANALYTE/RULE") %>% dplyr::filter(ANALYTE.RULE == "TTHM") %>% group_by(FIPS,Month_Yr_VIOL)  %>% count() 
+
+count_df <- merge(county_count_events, county_count_tthm, by.x=c("FIPS","Month_Yr_EVENT"),
+                  by.y=c("FIPS","Month_Yr_VIOL"),all=TRUE) %>% rename(Events=n.x, Violations=n.y) %>% replace(is.na(.), 0) %>% 
+  mutate(Vio.dum=ifelse(Violations>0,1,0)) #Maybe change for >mean(Violations or another threshold)
+
+ols <- glm(Vio.dum ~ Events, data=count_df, family = binomial)
+summary(ols)
+
+plot(count_df$Events, count_df$Violations, ylab="Violations", xlab="Events", main="TTHM violations")
+
+```
+
+```{r}
+# SURFACE WATER violations 
+county_count_sw= sdwis_tceq_1 %>% dplyr::filter(SOURCE_TYPE=="SW"|SOURCE_TYPE=="SWP") %>% group_by(FIPS,Month_Yr_VIOL)  %>% count() 
+
+count_df <- merge(county_count_events, county_count_sw, by.x=c("FIPS","Month_Yr_EVENT"),
+                  by.y=c("FIPS","Month_Yr_VIOL"),all=TRUE) %>% rename(Events=n.x, Violations=n.y) %>% replace(is.na(.), 0) %>% 
+  mutate(Vio.dum=ifelse(Violations>0,1,0)) #Maybe change for >mean(Violations or another threshold)
+
+ols <- glm(Vio.dum ~ Events, data=count_df, family = binomial)
+summary(ols)
+
+plot(count_df$Events, count_df$Violations, ylab="Violations", xlab="Events", main="Surface Water violations")
+
+# GROUND WATER violations 
+county_count_gw= sdwis_tceq_1 %>% dplyr::filter(SOURCE_TYPE=="GW"|SOURCE_TYPE=="GWP") %>% group_by(FIPS,Month_Yr_VIOL)  %>% count() 
+
+count_df <- merge(county_count_events, county_count_gw, by.x=c("FIPS","Month_Yr_EVENT"),
+                  by.y=c("FIPS","Month_Yr_VIOL"),all=TRUE) %>% rename(Events=n.x, Violations=n.y) %>% replace(is.na(.), 0) %>% 
+  mutate(Vio.dum=ifelse(Violations>0,1,0)) #Maybe change for >mean(Violations or another threshold)
+
+ols <- glm(Vio.dum ~ Events, data=count_df, family = binomial)
+summary(ols)
+
+plot(count_df$Events, count_df$Violations, ylab="Violations", xlab="Events", main="Ground Water violations")
+```
+
+
+
+```{r}
+
+##Exploring the violations a little bit
+sdwis_tceq_1 %>% group_by(SOURCE_TYPE) %>% count() %>% ggplot(aes(x=SOURCE_TYPE, y=n, fill=SOURCE_TYPE))+geom_bar(stat="identity")+
+  labs(y="SDWIS MCL Violations", title="Texas")+theme_classic()
+
+#Increase in TTHM and coliforms could be a result of floods after a while (more orgnanic matter that gets converted to TTHMs in desinfection). Nitrate perhaps too
+sdwis_tceq_1 %>% filter(SOURCE_TYPE=="GW"|SOURCE_TYPE=="GWP")%>%group_by(`ANALYTE/RULE`) %>% count() %>%  filter(n>50)%>% 
+  ggplot(aes(x=`ANALYTE/RULE`, y=n, fill=`ANALYTE/RULE`))+geom_bar(stat="identity")+
+  labs(y="SDWIS MCL Violations", title="Utilites sourced with GW")+theme_classic()+ theme(axis.ticks.x = element_blank(),
+                                                                                       axis.text.x = element_blank())
+
+##TTHM, coliforms, and TUrbidity can increase after a flood (runoff + more organic material that produces TTHMs with Chlorine)
+#GW = ground water, SW = surface water
+sdwis_tceq_1 %>% filter(SOURCE_TYPE=="SW"|SOURCE_TYPE=="SWP")%>%group_by(`ANALYTE/RULE`) %>% count() %>%  filter(n>50)%>% 
+  ggplot(aes(x=`ANALYTE/RULE`, y=n, fill=`ANALYTE/RULE`))+geom_bar(stat="identity")+
+  labs(y="SDWIS MCL Violations", title="Utilites sourced with SW")+theme_classic()+ theme(axis.ticks.x = element_blank(),
+                                                                                          axis.text.x = element_blank())
+
+
+```
+
+code that don't make sense 
+```{r}
+
+# compare values of 1 row in count_events_df to find value for amt of violations / whether violations exist in that month 
+
+# initializing empty DF 
+dfn <- data.frame(Date=character(), # each month/year 
+              FIPS=character(), # county
+              VIOL_GIVEN_EVENT=numeric(), # 0,1,or NA
+              EVENT = numeric(), # 0 or 1 
+              stringsAsFactors=FALSE) 
+
+# running loops to try to fill out the DF with date, fips, violation given event, and whether an event happened 
+# k is row*col to have space for every combination of date and fips 
+# j is FIPS 
+# i is Date 
+"
+dim_length <- length(colnames(county_count_sdwis))*length(rownames(county_count_sdwis))
+for(k in 1:dim_length){
+  for(j in 1:length(colnames(county_count_sdwis))){
+    for(i in 1:length(rownames(county_count_sdwis))){
+      if(rownames(county_count_sdwis)[i] %in% count_events_df$Var1 & 
+        colnames(county_count_sdwis)[j]%in% count_events_df$Var2 & 
+        county_count_sdwis[i,j] >0) {
+        dfn[j,] <- c(rownames(county_count_sdwis)[j], colnames(county_count_sdwis)[i], 1,1)
+      }
+      if(rownames(county_count_sdwis)[i] %in% count_events_df$Var1 & 
+        colnames(county_count_sdwis)[j]%in% count_events_df$Var2 &
+        county_count_sdwis[i,j] == 0){
+        dfn[j,] <- c(rownames(county_count_sdwis)[j], colnames(county_count_sdwis)[i], 0,1)
+      }
+      if(rownames(county_count_sdwis)[i] %!in% count_events_df$Var1 | 
+        colnames(county_count_sdwis)[j] %in% count_events_df$Var2){
+        dfn[j,] <- c(rownames(county_count_sdwis)[j], colnames(county_count_sdwis)[i], NA,0)
+      }
+    }
+  }
+}"
+```
+
+
+# Suggested Model 2 - ON HOLD 
+glm logistic regression model 
+categorical Variable of county (FIPS)
+three variables - 
+1) presence/not of an event in a month 
+2) county variable 
+3) event type 
+```{r}
+
+```
+
+
+# TF-IDF 
+
+
+
+
