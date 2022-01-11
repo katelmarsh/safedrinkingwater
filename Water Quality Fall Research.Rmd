@@ -1,0 +1,533 @@
+---
+title: "Water Quality - Fall Research"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## EPA API call and Exploration    
+    
+```{r epa api call, eval = FALSE}
+library(httr)
+library(jsonlite)
+
+# getting one PWS 
+epa_data <- GET("https://data.epa.gov/efservice/WATER_SYSTEM_FACILITY/PWSID/TX0610262/CSV")
+epa_data$status_code
+epa_data <- content(epa_data)
+
+# getting all PWS facilities in Texas  
+epa_data <- GET("https://data.epa.gov/efservice/WATER_SYSTEM_FACILITY/PRIMACY_AGENCY_CODE/TX/ROWS/0:100000/CSV")
+epa_data$status_code
+epa_data <- content(epa_data)
+
+epa_data2 <- GET("https://data.epa.gov/efservice/WATER_SYSTEM_FACILITY/PRIMACY_AGENCY_CODE/TX/ROWS/100000:200000/CSV")
+epa_data2$status_code
+epa_data2 <- content(epa_data2)
+
+epa_facility_data <- rbind(epa_data, epa_data2)
+
+write.csv(epa_facility_data, "epa_facility_data.csv")
+
+```
+
+```{r epa api exploration}
+epa_facility_data <- read.csv("~/Downloads/epa_facility_data.csv")
+
+
+length(unique(epa_facility_data$WATER_SYSTEM_FACILITY.PWSID)) # almost 16k total individual PWS
+
+hist(as.Date(epa_facility_data$WATER_SYSTEM_FACILITY.FACILITY_DEACTIVATION_DATE, format = "%d-%b-%y"), "years",
+     main = "Deactivation Dates of Water System Facilities",
+     xlab = "Date")
+
+
+hist(as.Date(epa_facility_data$WATER_SYSTEM_FACILITY.FACILITY_DEACTIVATION_DATE, format = "%d-%b-%y"), "years",
+     main = "Deactivation Dates of Water System Facilities",
+     xlab = "Date")
+
+```
+
+## Cleaning and Merging Intakes and TCEQ Data
+  
+```{r}
+library(magrittr)
+library(ggplot2)
+intakes <- read.csv("~/Downloads/violation_intake_utilities.csv")
+tceq_df <- read.csv("~/Downloads/PIR54466_Health_Based_Violations.csv")
+
+mean(unique(tceq_df$WSID) %in% unique(intakes$WSID)) 
+# these are not thee  same for some reason 
+# three spaces after every set of numbers? for some reason 
+# head(tceq_df$WSID)
+gsub("[ \t]{3,}", "", "TX0010001   ") # practice line to gsub to fix merge
+
+# cleaning
+# fixing extra spaces behind WSID
+tceq_df$WSID <- gsub("[ \t]{3,}", "", tceq_df$WSID)  
+tceq_df$BEGIN_DT <- as.Date(tceq_df$BEGIN_DT, format ="%m/%d/%Y")
+tceq_df$END_DT <- as.Date(tceq_df$END_DT, format ="%m/%d/%Y")
+
+# data exploration
+#YEARS <- unique(tceq_df$VIOLATION_YEAR)
+hist(tceq_df$VIOLATION_YEAR) 
+
+#intakes and tceq data merged
+intakes_tceq <- merge(tceq_df, intakes, by.x="WSID", by.y="WSID", all.y=TRUE)
+# taking out commas and making numeric 
+intakes_tceq$POPULATION <- as.numeric(gsub(",", "", intakes_tceq$POPULATION)) 
+write.csv(intakes_tceq, "~/Downloads/merged_intakes_tceq_oct_18.csv")
+
+```
+
+## Basic Linear Regression & Plot Analysis 
+  
+```{r}
+out <- lm(Number.of.Violations ~ Number.of.Facilities + 
+            Number.of.Site.Visits + PopulationServed.Count + 
+            LAT_DD + LONG_DD + fips + BEGIN_DT + END_DT + POPULATION + 
+            VIOLATION_YEAR+ Primary.Source + HORZ_ACC, 
+          data = intakes_tceq)
+summary(out)
+out <- lm(Number.of.Violations ~ VIOLATION_YEAR, data = intakes_tceq) 
+summary(out)
+
+# thought "logical" class meant binary -> actually all NA values 
+#out <- glm(Number.of.Violations ~ OWNR_DES, data = intakes_tceq)
+
+
+plot(intakes_tceq$Number.of.Site.Visits, intakes_tceq$Number.of.Violations) 
+plot(intakes_tceq$Number.of.Facilities, intakes_tceq$Number.of.Violations) 
+plot(log(intakes_tceq$Number.of.Facilities), log(intakes_tceq$Number.of.Violations))
+```
+      
+#Plot 1 : site visits vs violations - actually a very very interesting plot! with almost a normal, unimodal distribution with a mean at around 15 and a standard deviation of around 3 (can calculate these, these are just estimates for now)   
+# Plot 2: facilities vs violations - does not appear to be highly correlated, high majority of violations are 100 or less and 50 or less facilities    
+# Plot 3: was interested in the log transformed plot, which seems to confirm that there is not really much of a shape in this set of data, although there might be a type of clustering before and after 4 (would be interesting to look into)   
+
+## Graphing from New Merge
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+
+#intakes_tceq$Primary.Source <- factor(intakes_tceq$Primary.Source, levels = c("Ground Water", "Ground Water Purchased", "Surface Water", "Surface Water Purchased"),labels = c("GW", "GWP", "SW", "SWP"))
+
+# ggplot of violations based on New Intakes Data 
+# surface water
+intakes_tceq %>% filter(Primary.Source=="Surface water"| 
+                          Primary.Source=="Surface water purchased")%>%
+  group_by(`ANALYTE.RULE.x`) %>% count() %>%  filter(n>10)%>% 
+  ggplot(aes(x=`ANALYTE.RULE.x`, y=n, fill=`ANALYTE.RULE.x`))+
+  geom_bar(stat="identity")+ labs(y="Intakes MCL Violations", 
+                                  title="Utilites sourced with SW")+
+  theme_classic() + theme(axis.ticks.x = element_blank(),
+                          axis.text.x = element_blank())
+
+#ground water 
+intakes_tceq %>% filter(Primary.Source=="Ground water"| 
+                          Primary.Source=="Ground water purchased")%>%
+  group_by(`ANALYTE.RULE.x`) %>% count() %>%  filter(n>10)%>% 
+  ggplot(aes(x=`ANALYTE.RULE.x`, y=n, fill=`ANALYTE.RULE.x`))+geom_bar(stat="identity")+
+  labs(y="Intakes MCL Violations", title="Utilites sourced with GW")+theme_classic() + 
+  theme(axis.ticks.x = element_blank(),axis.text.x = element_blank())
+
+# purchased
+intakes_tceq %>% 
+  filter(Primary.Source=="Ground water purchased"| Primary.Source=="Surface water purchased")%>%group_by(`ANALYTE.RULE.x`) %>% count() %>%  
+  filter(n>10)%>% ggplot(aes(x=`ANALYTE.RULE.x`, y=n, fill=`ANALYTE.RULE.x`))+
+  geom_bar(stat="identity")+
+  labs(y="Intakes MCL Violations", title="Utilites sourced with Purchased Water")+
+  theme_classic() + 
+  theme(axis.ticks.x = element_blank(), axis.text.x = element_blank())
+
+# non purchased (does this always mean locally sited?)
+intakes_tceq %>% filter(Primary.Source=="Ground water"| Primary.Source=="Surface water")%>%
+  group_by(`ANALYTE.RULE.x`) %>% count() %>%  filter(n>10)%>% 
+  ggplot(aes(x=`ANALYTE.RULE.x`, y=n, fill=`ANALYTE.RULE.x`))+
+  geom_bar(stat="identity")+
+  labs(y="Intakes MCL Violations", title="Utilites sourced with Non-Purchased Water")+
+  theme_classic() + theme(axis.ticks.x = element_blank(),
+                          axis.text.x = element_blank())
+
+# all together! 
+intakes_tceq %>% group_by(`ANALYTE.RULE.x`, Primary.Source) %>% 
+  count() %>%  filter(n>25)%>% ggplot(aes(x=`ANALYTE.RULE.x`, y=n, fill=`ANALYTE.RULE.x`))+
+  geom_bar(stat="identity")+
+  labs(y="Intakes MCL Violations", title="Violations Stratified by Water Source")+
+  theme_classic() + theme(axis.ticks.x = element_blank(),axis.text.x = element_blank()) + 
+  facet_wrap(. ~ Primary.Source, strip.position = "bottom")
+
+```
+
+        
+From the final graph, we can see that the non-purchased surface water has a much much higher set of violations, especially ones that are very harmful and uncommmon like Lead and Coliform. Ground water relatively has a much lower amount of TTHM and Turbidity, but it has violations in Radion and Gross Alpha at around double the amount of surface water. I also found it interesteing that TTHM and HAA5 are the violations for both of the purchased categories, leading me to believe that the purchased water might need to be excluded or at least flagged in subsequent analysis because it must come from very different sources than the non-purchased water. 
+
+
+```{r}
+head(intakes_tceq)
+library(ggmap)
+library(maps)
+library(ggplot2)
+library(tidyverse)
+
+sdwis_tceq <- read.csv("~/Downloads/merged_tceq_sdwis_2015_2020.csv")
+
+sdwis_intakes <- merge(intakes, sdwis_tceq, by.x="WSID", by.y="WSID", all = TRUE)
+sum(is.na(sdwis_intakes$LAT)) # 480 NAs 
+sum(is.na(sdwis_intakes$LONG_DD)) # 10240 
+sum(sdwis_tceq$WSID %!in% intakes$WSID) # there are 10,240 PWSs in the SDWIS_TCEQ dataset that are not in the intakes data 
+
+
+write.csv(sdwis_intakes, "~/Downloads/full_intakes_sdwis_tceq.csv")
+
+MainStates <- map_data("state", region= "Texas")
+
+ggplot() + 
+  geom_polygon(data=MainStates, aes(x=long, y=lat, group=group), color = "black", fill = "white") +
+  geom_point(data = sdwis_intakes, aes(x = LONG_DD, y = LAT_DD, group = WSID)) + # Intake point
+  geom_line(data = sdwis_intakes, aes(x = LON, y = LAT, group = WSID)) +  # PWS point 
+  ggtitle("PWS Locations in Texas vs Intake Locations") + 
+  coord_fixed(1.3) + 
+  theme_minimal()
+
+# Make a Grpah of Intake Locaitons vs PWS Locations
+colors <- c("Intake " = "blue", "PWS" = "red")
+ggplot() + 
+  geom_polygon(data=MainStates, aes(x=long, y=lat, group=group), color = "black", fill = "white") +
+  geom_point(data = sdwis_intakes, aes(x = LON, y = LAT, group = WSID, color = "Intake")) + 
+  geom_point(data = sdwis_intakes, aes(x = LONG_DD, y = LAT_DD, group = WSID, color = "PWS")) + 
+  ggtitle("PWS Locations in Texas vs Intake Locations") + 
+  coord_fixed(1.3) + 
+  theme_minimal()
+
+ggplot() + 
+  geom_polygon(data=MainStates, aes(x=long, y=lat, group=group), color = "black", fill = "white") +
+  geom_point(data = sdwis_intakes, aes(x = LON, y = LAT, group = WSID, color = "Intake")) + 
+  geom_point(data = sdwis_intakes, aes(x = LONG_DD, y = LAT_DD, group = WSID, color = "PWS")) + 
+  ggtitle("PWS Locations in Texas vs Intake Locations") + 
+  coord_fixed(1.3) + 
+  theme_void() + 
+  facet_wrap(.~Primary.Source, ncol = 3)
+
+```
+
+```{r}
+head(intakes_tceq)
+library(ggmap)
+library(maps)
+library(ggplot2)
+library(tidyverse)
+
+sdwis_tceq <- read.csv("~/Downloads/merged_tceq_sdwis_2015_2020.csv")
+
+sdwis_intakes_1 <- merge(intakes, sdwis_tceq, by.x="WSID", by.y="WSID", all.x = TRUE)
+write.csv(sdwis_intakes_1, "~/Downloads/full_intakes_sdwis_tceq.csv")
+
+MainStates <- map_data("state", region= "Texas")
+
+ggplot() + 
+  geom_polygon(data=MainStates, aes(x=long, y=lat, group=group), color = "black", fill = "white") +
+  geom_point(data = sdwis_intakes_1, aes(x = LONG_DD, y = LAT_DD, group = WSID)) + # Intake point
+  geom_line(data = sdwis_intakes_1, aes(x = LON, y = LAT, group = WSID)) +  # PWS point 
+  ggtitle("PWS Locations in Texas vs Intake Locations") + 
+  coord_fixed(1.3) + 
+  theme_minimal()
+
+# Make a Grpah of Intake Locaitons vs PWS Locations
+colors <- c("Intake " = "blue", "PWS" = "red")
+ggplot() + 
+  geom_polygon(data=MainStates, aes(x=long, y=lat, group=group), color = "black", fill = "white") +
+  geom_point(data = sdwis_intakes_1, aes(x = LON, y = LAT, group = WSID, color = "Intake")) + 
+  geom_point(data = sdwis_intakes_1, aes(x = LONG_DD, y = LAT_DD, group = WSID, color = "PWS")) + 
+  ggtitle("PWS Locations in Texas vs Intake Locations") + 
+  coord_fixed(1.3) + 
+  theme_minimal()
+
+ggplot() + 
+  geom_polygon(data=MainStates, aes(x=long, y=lat, group=group), color = "black", fill = "white") +
+  geom_point(data = sdwis_intakes_1, aes(x = LON, y = LAT, group = WSID, color = "Intake")) + 
+  geom_point(data = sdwis_intakes_1, aes(x = LONG_DD, y = LAT_DD, group = WSID, color = "PWS")) + 
+  ggtitle("PWS Locations in Texas vs Intake Locations") + 
+  coord_fixed(1.3) + 
+  theme_void() + 
+  facet_wrap(.~Primary.Source, ncol = 3)
+
+
+```
+Notes
+
+Ground water (non-purchased) is from wells, owned and operated by the PWS. The Well locations are in the EPA dataset. 
+Surface water is unclear. 
+
+
+# New Datasets 
+Public Water Systems
+https://gis-tceq.opendata.arcgis.com/maps/TCEQ::public-water-system/about
+Wells
+https://gis-tceq.opendata.arcgis.com/datasets/TCEQ::wells-1/explore
+Reservoirs 
+https://gis-tceq.opendata.arcgis.com/datasets/TCEQ::reservoirs/explore?location=31.229215%2C-100.093750%2C6.45&showTable=true
+
+# Joining PWS, Surface Intakes, and HUCS
+```{r}
+library(sf)
+library(ggplot2)
+
+reservoirs <- read.csv("~/Downloads/Public_Water_System_reservoir.csv") # not sure I can use this 
+wells <- read.csv("~/Downloads/Public_Water_System_wells.csv")
+surf_intakes <- read.csv("~/Downloads/Public_Water_System_surface_intakes.csv")
+
+# why is the PWS_ID 1? 
+surf_intakes[surf_intakes$PWS_ID == 1,] 
+wells[wells$PWS_ID == 1,]
+
+
+# this merge doesn't make a lot of sense - how would one merge 
+#source_water <- merge(wells, surf_intakes, by = "PWS_ID") 
+
+# set up the code so it 
+
+# start doing the HUC analysis, which intakes are inside the watershed 
+# do it in r - what is within the polygon 
+surf_intakes <- st_read("~/Downloads/Public_Water_System/Public_Water_System.shp") 
+# CRS is NAD83
+hucs <- st_read("~/Downloads/huc250k_shp/huc250k.shp")
+dim(hucs)
+hucs <- hucs[hucs$REG == 11 | hucs$REG == 12 | hucs$REG == 13,] # Texas-Gulf, Arkansas Red Line, and Rio Grande Regions 
+plot(hucs)
+
+#changing hucs CRS to NAD83
+hucs_nad <- st_transform(hucs, "NAD83")
+st_crs(hucs_nad) == st_crs(surf_intakes) # same CRS ! 
+plot(hucs_nad)
+
+#st_contains(surf_intakes, hucs_nad)
+
+ggplot() +
+  geom_sf(data = hucs_nad) + 
+  geom_sf(data=surf_intakes) + 
+  ggtitle("HUCs and Surface Intakes")
+
+# the join! 
+joined_surf_hucs <- st_join(surf_intakes, hucs_nad)
+
+```
+# Joining PWS, Wells, and HUCS
+```{r}
+library(ggplot2)
+library(sf)
+library(tidyverse)
+library(ggmap)
+
+
+wells <- st_read("~/Downloads/Public_Water_System_Wells/Public_Water_System.shp") 
+# CRS is NAD83
+
+joined_wells_hucs <- st_join(wells, hucs_nad)
+head(joined_wells_hucs)
+
+# making csv with wells and hucs 
+joined_wells_hucs %>%
+        st_as_sf(., coords = c("lon", "lat"), crs = "NAD83") %>% 
+        cbind(., st_coordinates(.)) %>% 
+        st_set_geometry(NULL) %>% 
+        write_csv(., 'wells_hucs_join.csv')
+
+
+# making csv with wells and hucs 
+joined_surf_hucs %>%
+        st_as_sf(., coords = c("lon", "lat"), crs = "NAD83") %>% 
+        cbind(., st_coordinates(.)) %>% 
+        st_set_geometry(NULL) %>% 
+        write_csv(., 'surf_hucs_join.csv')
+
+ggplot() +
+  geom_sf(data = hucs_nad) + 
+  geom_sf(data=wells, size = 1) + 
+  ggtitle("Texas Wells & HUCS")
+
+ggplot() +
+  geom_sf(data = hucs_nad) + 
+  geom_sf(data=wells, size = 1, aes(color = 'Surface Intakes')) + 
+  geom_sf(data=surf_intakes, size = 1, aes(color = 'Wells')) + 
+  ggtitle("Texas Water Sources & HUCS")
+
+
+# why doesn't this work? 
+
+#colnames <- colnames(wh_join)[which(colnames(wh_join) %in% colnames(sh_join))]
+#intakes_hucs<- merge(wh_join, sh_join, by.x = colnames, by.y = colnames)
+#intakes_hucs
+
+```
+```{r}
+library(sf)
+wh_join <- read.csv("wells_hucs_join.csv")
+sh_join <- read.csv("surf_hucs_join.csv")
+
+#surface intakes 
+sh_join <- read.csv("surf_hucs_join.csv")
+intakes_tceq <- read.csv("~/Downloads/merged_intakes_tceq_oct_18.csv")
+
+# full join
+intakes_tceq_hucs <- merge(sh_join, intakes_tceq, by = "PWS_ID", all = TRUE)
+write.csv(intakes_tceq_hucs, "~/Downloads/intakes_tceq_hucs.csv")
+
+sorted <- as.data.frame(sort(table(intakes_tceq_hucs$HUC_NAME), decreasing = TRUE))
+head(sorted, 30)
+
+weather <- read.csv("~/Downloads/tx_all_weather.csv")
+# as opposed to joined_tx_weather 
+#Paulina's code for filtering and cleaning property damage $ 
+events=c("Flash Flood","Drought", "Flood","Heavy Rain","Hurricane (Typhoon)",
+         "Tropical Storm","Tropical Depression","Hurricane","THUNDERSTORM WINDS/ FLOOD")
+
+weather=weather %>% filter(EVENT_TYPE%in%events) %>% mutate(Z_FIPS=case_when(
+  CZ_FIPS<100&CZ_FIPS>9~paste0(0,CZ_FIPS),
+  CZ_FIPS<10~paste0("00",CZ_FIPS),
+  CZ_FIPS>99~paste0(CZ_FIPS))) %>% 
+  mutate(Z_FIPS=paste0(STATE_FIPS,Z_FIPS), DAMAGE_PROPERTY_NUM= as.numeric(gsub("[a-zA-Z ]", "", DAMAGE_PROPERTY)),
+         Q=str_sub(DAMAGE_PROPERTY,-1,-1)) %>% 
+  mutate(DAMAGE_PROPERTY_NUM=case_when( #Getting numeric values for property damage
+    Q=="K"~DAMAGE_PROPERTY_NUM*1000,
+    Q=="M"~DAMAGE_PROPERTY_NUM*1000000,
+    Q=="B"~DAMAGE_PROPERTY_NUM*1000000000,
+    Q==0~DAMAGE_PROPERTY_NUM
+    ))
+
+# REMOVING NAs in the LONG/LAT Columns 
+weather <- weather[!is.na(weather$BEGIN_LAT) | !is.na(weather$BEGIN_LON),] # removing events without coords 
+
+# ADDING IDENTIFIERS TO BEGINNING HUCS
+weather_nad83_begin <- st_as_sf(weather, coords = c("BEGIN_LON", "BEGIN_LAT"), crs="NAD83")
+joined_weather_hucs_b <- st_join(weather_nad83_begin, hucs_nad)
+joined_weather_hucs_b$HUC250K_B <- joined_weather_hucs_b$HUC250K_
+joined_weather_hucs_b$HUC250K_ID_B <- joined_weather_hucs_b$HUC250K_ID 
+joined_weather_hucs_b$HUC_CODE_B <- joined_weather_hucs_b$HUC_CODE
+joined_weather_hucs_b$HUC_NAME_B <- joined_weather_hucs_b$HUC_NAME
+st_geometry(joined_weather_hucs_b) <- NULL
+
+weather <- weather[!is.na(weather$END_LAT) | !is.na(weather$END_LON),] # removing events without coords 
+
+# ADDING IDENTIFIERS TO ENDING HUCS 
+weather_nad83_end <- st_as_sf(weather, coords = c("END_LON", "END_LAT"), crs="NAD83")
+joined_weather_hucs_e <- st_join(weather_nad83_end, hucs_nad)
+joined_weather_hucs_e$HUC250K_E <- joined_weather_hucs_e$HUC250K_
+joined_weather_hucs_e$HUC250K_ID_E <- joined_weather_hucs_e$HUC250K_ID 
+joined_weather_hucs_e$HUC_CODE_E <- joined_weather_hucs_e$HUC_CODE
+joined_weather_hucs_e$HUC_NAME_E <- joined_weather_hucs_e$HUC_NAME
+st_geometry(joined_weather_hucs_e) <- NULL
+
+dim(joined_weather_hucs_b)
+weather_hucs <- as.data.frame(cbind(weather, joined_weather_hucs_b[,89:92], joined_weather_hucs_e[,89:92]))
+write.csv(weather_hucs, "~/Downloads/weather_hucs_dec_15_v2.csv")
+
+# 160 HUCS 
+top_40_b <- head(sort(table(weather_hucs$HUC_NAME_B), decreasing = TRUE), 40)
+top_40_e <- head(sort(table(weather_hucs$HUC_NAME_E), decreasing = TRUE), 40)
+top_40_b[which(top_40_b %in% top_40_e)]
+# there are 4 HUCS where they are in the top 40 for both beginning location and ending location of weather events 
+
+```
+
+# Top damage in Each HUC
+
+```{r}
+library(lubridate)
+library(tidyverse)
+library(broom)
+library(dplyr)
+library(sf)
+
+#Intakes 
+intakes_tceq_hucs <- read.csv("~/Downloads/intakes_tceq_hucs.csv")
+intakes_tceq_hucs$BEGIN_DT_VIOL <- as.Date(ymd(intakes_tceq_hucs$BEGIN_DT))
+
+# Weather 
+data_1 <- read.csv("~/Downloads/weather_hucs_dec_15_v2.csv")
+data_1 = data_1[data_1$YEAR >=2015,]
+top_mil <- data_1[which(data_1$DAMAGE_PROPERTY_NUM >= 0),]
+top_mil$BEGIN_DATE_TIME <- as.Date(ymd_hms(top_mil$BEGIN_DATE_TIME))
+
+#sdwis_tceq <- rename(sdwis_tceq, BEGIN_DT_VIOL = BEGIN_DT) 
+#st_geometry(top_mil) <- NULL
+#top_mil <- st_set_geometry(top_mil, NULL) # removing geometry 
+#top_mil <- top_mil[,-c(86,91)]
+top_mil <- rename(top_mil, BEGIN_DT_EVENT = BEGIN_DATE_TIME) 
+
+top_mil = top_mil[top_mil$YEAR >=2015,]
+max_per_hucs <- top_mil %>% group_by(HUC_CODE_B) %>% slice(which.max(DAMAGE_PROPERTY_NUM))
+max_per_hucs$BEGIN_DT_EVENT <- as.Date(ymd(max_per_hucs$BEGIN_DT_EVENT))
+max_per_hucs = max_per_hucs[max_per_hucs$YEAR >=2015,]
+ 
+# MERGING DFS TOGETHER
+merged_df <- merge(intakes_tceq_hucs,max_per_hucs, by.x="HUC_CODE", by.y= "HUC_CODE_B", all.x=TRUE) 
+
+# CHECKING RANGES
+hist(merged_df$BEGIN_DT_VIOL, "months")
+hist(merged_df$BEGIN_DT_EVENT, "months")
+
+#if violation began after event, put 1 in dummy column 
+merged_df$dummy <- ifelse(merged_df$BEGIN_DT_VIOL >= merged_df$BEGIN_DT_EVENT, 1, 0)
+
+merged_df <- merged_df[!is.na(merged_df$dummy),] # removing events without dates 
+mean(is.na(merged_df$dummy))
+
+ols <- glm(dummy~DAMAGE_PROPERTY_NUM + VIOLATION_YEAR + Number.of.Facilities + Number.of.Site.Visits,family = binomial, data=merged_df)
+summary(ols)
+plot(ols)
+probabilities <- predict(ols, type = "response")
+hist(probabilities)
+predicted.classes <- ifelse(probabilities > 0.5, "after event", "before event")
+table(predicted.classes)
+head(predicted.classes)
+
+```
+```
+
+
+```{r}
+library(readr)
+library(lubridate)
+
+#data_1 <- read_csv("joined_tx_weather.csv")
+intakes_tceq_hucs <- read.csv("~/Downloads/intakes_tceq_hucs.csv")
+#sdwis_tceq_1 <- read_csv("merged_tceq_sdwis_2015_2020.csv")
+data_1 <- read.csv("~/Downloads/weather_hucs_dec_15_v2.csv") 
+
+top_mil = data_1  %>%  filter(YEAR >=2015& DAMAGE_PROPERTY_NUM >= 1000) %>% 
+  mutate(BEGIN_DATE_TIME= as.Date(dmy_hms(BEGIN_DATE_TIME)), 
+         Month_Yr_EVENT=format(as.Date(top_mil$BEGIN_DT_EVENT, "%d-%b-%y"), "%Y-%m"))  %>% 
+  rename(BEGIN_DT_EVENT = BEGIN_DATE_TIME)
+
+#top_mil$Month_Yr_EVENT = NULL
+#top_mil$Month_Yr_EVENT <- format(as.Date(top_mil$BEGIN_DT_EVENT, "%d-%b-%y"), "%Y-%m")
+
+intakes_tceq_hucs=intakes_tceq_hucs %>% mutate(Month_Yr_VIOL=format(as.Date(BEGIN_DT), "%Y-%m"))
+
+huc_count_events=top_mil %>% group_by(HUC_CODE_B,Month_Yr_EVENT) %>% count()
+huc_count_sdwis=intakes_tceq_hucs %>% group_by(HUC_CODE,Month_Yr_VIOL) %>% count()
+
+count_df <- merge(huc_count_events, huc_count_sdwis, by.x=c("HUC_CODE_B","Month_Yr_EVENT"),
+                  by.y=c("HUC_CODE","Month_Yr_VIOL"),all=TRUE) %>% rename(Events=n.x, Violations=n.y) %>% replace(is.na(.), 0) %>% 
+  mutate(Vio.dum=ifelse(Violations>0,1,0)) #Maybe change for >mean(Violations or another threshold)
+
+ols <- glm(Vio.dum ~ Events, data=count_df, family = binomial)
+summary(ols)
+probabilities <- predict(ols, type = "response")
+hist(probabilities)
+predicted.classes <- ifelse(probabilities > 0.5, "month has violations", "month has no violations")
+table(predicted.classes)
+head(predicted.classes)
+plot(count_df$Events, count_df$Vio.dum, ylab="Violations", xlab="Events", main="All types of violations")
+plot(count_df$Events, count_df$Violations, ylab="Violations", xlab="Events", main="All types of violations")
+
+
+```
+
+
+
