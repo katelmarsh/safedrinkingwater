@@ -1,2 +1,2 @@
 # Safe Drinking Water
-laidlaw summer 2 project
+Laidlaw Scholars Summer 2 project & Fall 2021 Research Assistant Job
